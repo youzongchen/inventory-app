@@ -197,20 +197,21 @@ class _ScanScreenState extends State<ScanScreen> {
                                           ],
                                         ),
                                       ),
-                                      const SizedBox(width: 12),
                                       InkWell(
                                         onTap: () => setState(() => row.damaged = !row.damaged),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Icon(
-                                              Icons.warning_amber_rounded,
-                                              size: 14,
-                                              color: row.damaged ? Colors.orange.shade800 : Colors.grey.shade400,
+                                            Checkbox(
+                                              value: row.damaged,
+                                              visualDensity: VisualDensity.compact,
+                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                              activeColor: Colors.orange.shade800,
+                                              onChanged: (v) => setState(() => row.damaged = v ?? false),
                                             ),
                                             const SizedBox(width: 2),
                                             Text(
-                                              '損壞',
+                                              '毀損',
                                               style: TextStyle(
                                                 fontSize: 12,
                                                 color: row.damaged ? Colors.orange.shade800 : Colors.grey,

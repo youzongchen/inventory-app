@@ -4,12 +4,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models.dart';
 import '../services/download.dart';
 import '../services/excel_repo.dart';
+import '../services/sheets_repo.dart';
 
 class InventoryState extends ChangeNotifier {
   static const _prefKey = 'base_excel_path';
+  static const _sheetsUrlPrefKey = 'sheets_api_url';
+  static const _sheetsKeyPrefKey = 'sheets_api_key';
 
   String? filePath;
   String? webFileName; // web has no real path - just the name to re-download as
+  String? sheetsApiUrl; // web only: Google Apps Script Web App URL, if connected
+  String? sheetsKey;
   List<Product> products = [];
   List<TxRecord> transactions = [];
   List<PendingScan> session = [];
@@ -19,6 +24,42 @@ class InventoryState extends ChangeNotifier {
   Future<String?> restoreLastPath() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_prefKey);
+  }
+
+  /// Returns the last-used (apiUrl, key) pair, or null if never connected.
+  Future<(String, String)?> restoreSheetsConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final url = prefs.getString(_sheetsUrlPrefKey);
+    final key = prefs.getString(_sheetsKeyPrefKey);
+    if (url == null || key == null) return null;
+    return (url, key);
+  }
+
+  /// Connects to a Google Sheets backend (see Code.gs) instead of a local
+  /// file - web only. Every save pushes the full products+transactions state
+  /// to the Apps Script Web App, which overwrites the sheet, so there's no
+  /// more "download a new copy every time" friction.
+  Future<void> loadFromSheets(String apiUrl, String key) async {
+    loading = true;
+    loadError = null;
+    notifyListeners();
+    try {
+      final data = await SheetsRepo.load(apiUrl, key);
+      products = data.products;
+      transactions = data.transactions;
+      filePath = null;
+      webFileName = null;
+      sheetsApiUrl = apiUrl;
+      sheetsKey = key;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_sheetsUrlPrefKey, apiUrl);
+      await prefs.setString(_sheetsKeyPrefKey, key);
+    } catch (e) {
+      loadError = '連線失敗：$e';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
   }
 
   Future<void> loadFile(String path) async {
@@ -31,6 +72,8 @@ class InventoryState extends ChangeNotifier {
       transactions = data.transactions;
       filePath = path;
       webFileName = null;
+      sheetsApiUrl = null;
+      sheetsKey = null;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefKey, path);
     } catch (e) {
@@ -54,6 +97,8 @@ class InventoryState extends ChangeNotifier {
       transactions = data.transactions;
       filePath = null;
       webFileName = fileName;
+      sheetsApiUrl = null;
+      sheetsKey = null;
     } catch (e) {
       loadError = '讀取失敗：$e';
     } finally {
@@ -84,6 +129,10 @@ class InventoryState extends ChangeNotifier {
   }
 
   Future<void> _save() async {
+    if (sheetsApiUrl != null) {
+      await SheetsRepo.save(sheetsApiUrl!, sheetsKey!, products, transactions);
+      return;
+    }
     if (kIsWeb) {
       if (webFileName == null) return;
       final bytes = ExcelRepo.encodeBytes(products, transactions);

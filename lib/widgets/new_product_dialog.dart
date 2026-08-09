@@ -24,6 +24,7 @@ class NewProductDialog extends StatefulWidget {
 class _NewProductDialogState extends State<NewProductDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
+  final _brandCtrl = TextEditingController();
   final _costCtrl = TextEditingController();
   final _boxQtyCtrl = TextEditingController();
   String _category = kCategories.first;
@@ -68,6 +69,25 @@ class _NewProductDialogState extends State<NewProductDialog> {
                     .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                     .toList(),
                 onChanged: (v) => setState(() => _category = v!),
+              ),
+              const SizedBox(height: 12),
+              Autocomplete<String>(
+                optionsBuilder: (v) {
+                  if (v.text.trim().isEmpty) return state.brands;
+                  return state.brands.where(
+                    (b) => b.toLowerCase().contains(v.text.trim().toLowerCase()),
+                  );
+                },
+                onSelected: (v) => _brandCtrl.text = v,
+                fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+                  // Keep our own controller in sync so the submit handler can read it.
+                  controller.addListener(() => _brandCtrl.text = controller.text);
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: const InputDecoration(labelText: '品牌（選填，可從既有品牌選或直接輸入新的）'),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               Row(
@@ -135,6 +155,7 @@ class _NewProductDialogState extends State<NewProductDialog> {
               barcode: widget.barcode,
               name: _nameCtrl.text.trim(),
               category: _category,
+              brand: _brandCtrl.text.trim(),
               unitType: _unitType,
               boxQty: _unitType == '整箱' ? int.tryParse(_boxQtyCtrl.text) : null,
               linkedLooseBarcode: _unitType == '整箱' ? _linkedBarcode : null,

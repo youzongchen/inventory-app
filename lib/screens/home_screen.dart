@@ -3,21 +3,29 @@ import 'package:provider/provider.dart';
 import '../state/inventory_state.dart';
 import 'location_screen.dart';
 import 'dashboard_screen.dart';
+import 'startup_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
+  static void _switchSource(BuildContext context) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const StartupScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<InventoryState>();
+    final source = state.filePath ?? state.webFileName ?? state.sheetsApiUrl;
     return Scaffold(
       appBar: AppBar(
         title: const Text('庫存管理系統'),
         actions: [
           IconButton(
-            tooltip: '切換 Excel 檔案',
+            tooltip: '切換資料來源',
             icon: const Icon(Icons.swap_horiz),
-            onPressed: () => context.read<InventoryState>().pickAndLoadFile(),
+            onPressed: () => _switchSource(context),
           ),
         ],
       ),
@@ -27,21 +35,28 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (state.filePath != null || state.webFileName != null)
+              if (source != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 24),
                   child: InkWell(
-                    onTap: () => context.read<InventoryState>().pickAndLoadFile(),
+                    onTap: () => _switchSource(context),
                     borderRadius: BorderRadius.circular(8),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          Icon(
+                            state.sheetsApiUrl != null ? Icons.cloud_outlined : Icons.description_outlined,
+                            size: 14,
+                            color: Colors.grey,
+                          ),
+                          const SizedBox(width: 4),
                           Flexible(
                             child: Text(
-                              '資料來源：${state.filePath ?? state.webFileName}',
+                              '資料來源：$source',
                               style: const TextStyle(color: Colors.grey, fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           const SizedBox(width: 6),

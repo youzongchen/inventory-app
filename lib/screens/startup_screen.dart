@@ -12,37 +12,77 @@ class StartupScreen extends StatefulWidget {
 }
 
 class _StartupScreenState extends State<StartupScreen> {
+  final _urlCtrl = TextEditingController();
+  final _keyCtrl = TextEditingController();
+  bool _showSheetsForm = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _init());
   }
 
+  @override
+  void dispose() {
+    _urlCtrl.dispose();
+    _keyCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _init() async {
-    // Web always starts from a fresh pick - there's no persisted filesystem
-    // path a browser tab can silently reopen.
-    if (kIsWeb) return;
     final state = context.read<InventoryState>();
+    if (kIsWeb) {
+      // Web has no persisted local file path, but a previously-connected
+      // Google Sheet is worth silently reconnecting to.
+      final sheets = await state.restoreSheetsConfig();
+      if (sheets != null) {
+        final (url, key) = sheets;
+        _urlCtrl.text = url;
+        _keyCtrl.text = key;
+        await state.loadFromSheets(url, key);
+        if (state.loadError == null && mounted) {
+          _goHome();
+          return;
+        }
+      }
+      if (mounted) setState(() {});
+      return;
+    }
     final lastPath = await state.restoreLastPath();
     if (lastPath != null) {
       await state.loadFile(lastPath);
       if (state.loadError == null && mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-        );
+        _goHome();
         return;
       }
     }
     if (mounted) setState(() {});
   }
 
+  void _goHome() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
+    );
+  }
+
   Future<void> _pickFile() async {
     final state = context.read<InventoryState>();
     final ok = await state.pickAndLoadFile();
     if (ok && mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
+      _goHome();
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _connectSheets() async {
+    final url = _urlCtrl.text.trim();
+    final key = _keyCtrl.text.trim();
+    if (url.isEmpty || key.isEmpty) return;
+    final state = context.read<InventoryState>();
+    await state.loadFromSheets(url, key);
+    if (state.loadError == null && mounted) {
+      _goHome();
     } else if (mounted) {
       setState(() {});
     }
@@ -53,37 +93,105 @@ class _StartupScreenState extends State<StartupScreen> {
     final state = context.watch<InventoryState>();
     return Scaffold(
       body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.inventory_2_outlined, size: 72, color: Color(0xFF2F5597)),
-              const SizedBox(height: 16),
-              const Text('庫存管理系統', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('請選擇作為資料庫的 Excel 檔案 (.xlsx)', style: TextStyle(color: Colors.grey)),
-              if (kIsWeb)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text(
-                    '網頁版：每次修改會下載一份新檔案，請自行覆蓋原本的檔案',
-                    style: TextStyle(color: Colors.orange, fontSize: 12),
-                  ),
-                ),
-              const SizedBox(height: 24),
-              if (state.loading) const CircularProgressIndicator(),
-              if (state.loadError != null) ...[
-                Text(state.loadError!, style: const TextStyle(color: Colors.red)),
-                const SizedBox(height: 12),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.inventory_2_outlined, size: 72, color: Color(0xFF2F5597)),
+                const SizedBox(height: 16),
+                const Text('庫存管理系統', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 24),
+                if (state.loading) const CircularProgressIndicator(),
+                if (state.loadError != null) ...[
+                  Text(state.loadError!, style: const TextStyle(color: Colors.red)),
+                  const SizedBox(height: 12),
+                ],
+                if (!state.loading) ...[
+                  if (!_showSheetsForm) ...[
+                    const Text('請選擇作為資料庫的 Excel 檔案 (.xlsx)', style: TextStyle(color: Colors.grey)),
+                    if (kIsWeb)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          '選本機檔案的話，網頁版每次修改會下載一份新檔案，需自行覆蓋原檔',
+                          style: TextStyle(color: Colors.orange, fontSize: 12),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _pickFile,
+                      icon: const Icon(Icons.folder_open),
+                      label: const Text('選擇 Excel 檔案'),
+                    ),
+                    if (kIsWeb) ...[
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text('或', style: TextStyle(color: Colors.grey)),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => setState(() => _showSheetsForm = true),
+                        icon: const Icon(Icons.cloud_outlined),
+                        label: const Text('連接 Google 試算表'),
+                      ),
+                    ],
+                  ] else ...[
+                    const Text(
+                      '連接 Google 試算表',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4, bottom: 16),
+                      child: Text(
+                        '存檔會自動同步，不用每次下載檔案再覆蓋',
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 360,
+                      child: TextField(
+                        controller: _urlCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Apps Script 網頁應用程式網址',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: 360,
+                      child: TextField(
+                        controller: _keyCtrl,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: '密鑰（SECRET_KEY）',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: () => setState(() => _showSheetsForm = false),
+                          child: const Text('返回'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: _connectSheets,
+                          icon: const Icon(Icons.cloud_done_outlined),
+                          label: const Text('連接'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ],
-              if (!state.loading)
-                FilledButton.icon(
-                  onPressed: _pickFile,
-                  icon: const Icon(Icons.folder_open),
-                  label: const Text('選擇 Excel 檔案'),
-                ),
-            ],
+            ),
           ),
         ),
       ),
