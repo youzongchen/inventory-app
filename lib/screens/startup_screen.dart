@@ -5,7 +5,12 @@ import '../state/inventory_state.dart';
 import 'home_screen.dart';
 
 class StartupScreen extends StatefulWidget {
-  const StartupScreen({super.key});
+  /// Whether to silently reconnect to the last-used source (local path /
+  /// Google Sheet). True on cold app start; false when the user explicitly
+  /// navigated back here via "切換資料來源" wanting to pick something else.
+  final bool autoRestore;
+
+  const StartupScreen({super.key, this.autoRestore = true});
 
   @override
   State<StartupScreen> createState() => _StartupScreenState();
@@ -32,13 +37,18 @@ class _StartupScreenState extends State<StartupScreen> {
   Future<void> _init() async {
     final state = context.read<InventoryState>();
     if (kIsWeb) {
-      // Web has no persisted local file path, but a previously-connected
-      // Google Sheet is worth silently reconnecting to.
+      // Pre-fill the Sheets form either way so switching to it doesn't start blank.
       final sheets = await state.restoreSheetsConfig();
       if (sheets != null) {
         final (url, key) = sheets;
         _urlCtrl.text = url;
         _keyCtrl.text = key;
+      }
+      // Web has no persisted local file path, but a previously-connected
+      // Google Sheet is worth silently reconnecting to - unless the user
+      // explicitly came back here to pick something else.
+      if (widget.autoRestore && sheets != null) {
+        final (url, key) = sheets;
         await state.loadFromSheets(url, key);
         if (state.loadError == null && mounted) {
           _goHome();
@@ -48,6 +58,7 @@ class _StartupScreenState extends State<StartupScreen> {
       if (mounted) setState(() {});
       return;
     }
+    if (!widget.autoRestore) return;
     final lastPath = await state.restoreLastPath();
     if (lastPath != null) {
       await state.loadFile(lastPath);

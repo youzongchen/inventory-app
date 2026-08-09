@@ -10,7 +10,7 @@ class HomeScreen extends StatelessWidget {
 
   static void _switchSource(BuildContext context) {
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const StartupScreen()),
+      MaterialPageRoute(builder: (_) => const StartupScreen(autoRestore: false)),
     );
   }
 
