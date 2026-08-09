@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../state/inventory_state.dart';
@@ -7,18 +6,6 @@ import 'dashboard_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
-
-  static Future<void> _pickAndLoad(BuildContext context) async {
-    final state = context.read<InventoryState>();
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
-      dialogTitle: '選擇庫存 Excel 檔案 (.xlsx)',
-    );
-    if (result?.files.single.path != null) {
-      await state.loadFile(result!.files.single.path!);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +17,7 @@ class HomeScreen extends StatelessWidget {
           IconButton(
             tooltip: '切換 Excel 檔案',
             icon: const Icon(Icons.swap_horiz),
-            onPressed: () => _pickAndLoad(context),
+            onPressed: () => context.read<InventoryState>().pickAndLoadFile(),
           ),
         ],
       ),
@@ -40,11 +27,11 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (state.filePath != null)
+              if (state.filePath != null || state.webFileName != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 24),
                   child: InkWell(
-                    onTap: () => _pickAndLoad(context),
+                    onTap: () => context.read<InventoryState>().pickAndLoadFile(),
                     borderRadius: BorderRadius.circular(8),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -53,7 +40,7 @@ class HomeScreen extends StatelessWidget {
                         children: [
                           Flexible(
                             child: Text(
-                              '資料來源：${state.filePath}',
+                              '資料來源：${state.filePath ?? state.webFileName}',
                               style: const TextStyle(color: Colors.grey, fontSize: 12),
                             ),
                           ),

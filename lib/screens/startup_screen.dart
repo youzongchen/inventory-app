@@ -1,4 +1,4 @@
-import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../state/inventory_state.dart';
@@ -19,6 +19,9 @@ class _StartupScreenState extends State<StartupScreen> {
   }
 
   Future<void> _init() async {
+    // Web always starts from a fresh pick - there's no persisted filesystem
+    // path a browser tab can silently reopen.
+    if (kIsWeb) return;
     final state = context.read<InventoryState>();
     final lastPath = await state.restoreLastPath();
     if (lastPath != null) {
@@ -35,14 +38,8 @@ class _StartupScreenState extends State<StartupScreen> {
 
   Future<void> _pickFile() async {
     final state = context.read<InventoryState>();
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
-      dialogTitle: '選擇庫存 Excel 檔案 (.xlsx)',
-    );
-    if (result == null || result.files.single.path == null) return;
-    await state.loadFile(result.files.single.path!);
-    if (state.loadError == null && mounted) {
+    final ok = await state.pickAndLoadFile();
+    if (ok && mounted) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
@@ -66,6 +63,14 @@ class _StartupScreenState extends State<StartupScreen> {
               const Text('庫存管理系統', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               const Text('請選擇作為資料庫的 Excel 檔案 (.xlsx)', style: TextStyle(color: Colors.grey)),
+              if (kIsWeb)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text(
+                    '網頁版：每次修改會下載一份新檔案，請自行覆蓋原本的檔案',
+                    style: TextStyle(color: Colors.orange, fontSize: 12),
+                  ),
+                ),
               const SizedBox(height: 24),
               if (state.loading) const CircularProgressIndicator(),
               if (state.loadError != null) ...[

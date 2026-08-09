@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:excel/excel.dart';
 import '../models.dart';
 
@@ -48,10 +49,16 @@ class LoadedInventory {
 
 class ExcelRepo {
   /// Reads the workbook at [path] and returns the product master + tx log.
-  /// If the workbook doesn't have the expected sheets yet, returns empty lists
-  /// so a brand-new base file can be adopted.
+  /// Desktop/mobile only - web has no filesystem paths, use [loadBytes].
   static LoadedInventory load(String path) {
-    final bytes = File(path).readAsBytesSync();
+    return loadBytes(File(path).readAsBytesSync());
+  }
+
+  /// Reads a workbook already in memory (e.g. bytes picked via a web file
+  /// input) and returns the product master + tx log. If the workbook doesn't
+  /// have the expected sheets yet, returns empty lists so a brand-new base
+  /// file can be adopted.
+  static LoadedInventory loadBytes(Uint8List bytes) {
     final wb = Excel.decodeBytes(bytes);
 
     final products = <Product>[];
@@ -140,7 +147,18 @@ class ExcelRepo {
   }
 
   /// Writes products + transactions + a freshly computed overview back to [path].
+  /// Desktop/mobile only - web has no filesystem paths, use [encodeBytes].
   static void save(String path, List<Product> products, List<TxRecord> tx) {
+    final bytes = encodeBytes(products, tx);
+    if (bytes != null) {
+      File(path).writeAsBytesSync(bytes);
+    }
+  }
+
+  /// Builds the .xlsx bytes for products + transactions + a freshly computed
+  /// overview, without touching the filesystem. Used directly on web (the
+  /// caller triggers a browser download) and internally by [save].
+  static Uint8List? encodeBytes(List<Product> products, List<TxRecord> tx) {
     final wb = Excel.createExcel();
 
     final ps = wb[_sheetProducts];
@@ -207,9 +225,7 @@ class ExcelRepo {
 
     wb.delete('Sheet1');
     final bytes = wb.encode();
-    if (bytes != null) {
-      File(path).writeAsBytesSync(bytes);
-    }
+    return bytes == null ? null : Uint8List.fromList(bytes);
   }
 
   static List<OverviewRow> computeOverview(List<Product> products, List<TxRecord> tx) {

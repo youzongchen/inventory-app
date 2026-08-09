@@ -1,12 +1,15 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models.dart';
+import '../services/download.dart';
 import '../services/excel_repo.dart';
 
 class InventoryState extends ChangeNotifier {
   static const _prefKey = 'base_excel_path';
 
   String? filePath;
+  String? webFileName; // web has no real path - just the name to re-download as
   List<Product> products = [];
   List<TxRecord> transactions = [];
   List<PendingScan> session = [];
@@ -27,6 +30,7 @@ class InventoryState extends ChangeNotifier {
       products = data.products;
       transactions = data.transactions;
       filePath = path;
+      webFileName = null;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefKey, path);
     } catch (e) {
@@ -37,7 +41,55 @@ class InventoryState extends ChangeNotifier {
     }
   }
 
+  /// Web has no filesystem paths - loads from bytes picked via a browser
+  /// file input instead. [fileName] is kept only so re-saving can offer the
+  /// same name for the downloaded copy.
+  Future<void> loadFromBytes(Uint8List bytes, String fileName) async {
+    loading = true;
+    loadError = null;
+    notifyListeners();
+    try {
+      final data = ExcelRepo.loadBytes(bytes);
+      products = data.products;
+      transactions = data.transactions;
+      filePath = null;
+      webFileName = fileName;
+    } catch (e) {
+      loadError = '讀取失敗：$e';
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Opens the platform file picker and loads the chosen workbook - a real
+  /// path on desktop/mobile, or in-memory bytes on web. Returns true on success.
+  Future<bool> pickAndLoadFile() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+      dialogTitle: '選擇庫存 Excel 檔案 (.xlsx)',
+      withData: kIsWeb,
+    );
+    if (result == null) return false;
+    final file = result.files.single;
+    if (kIsWeb) {
+      if (file.bytes == null) return false;
+      await loadFromBytes(file.bytes!, file.name);
+    } else {
+      if (file.path == null) return false;
+      await loadFile(file.path!);
+    }
+    return loadError == null;
+  }
+
   Future<void> _save() async {
+    if (kIsWeb) {
+      if (webFileName == null) return;
+      final bytes = ExcelRepo.encodeBytes(products, transactions);
+      if (bytes != null) downloadBytes(bytes, webFileName!);
+      return;
+    }
     if (filePath == null) return;
     ExcelRepo.save(filePath!, products, transactions);
   }
