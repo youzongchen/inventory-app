@@ -57,7 +57,7 @@ class SheetsRepo {
       cost: _toDouble(j['cost']),
       price: _toDouble(j['price']),
       safetyStock: _toInt(j['safetyStock']),
-      createdAt: DateTime.tryParse(j['createdAt']?.toString() ?? ''),
+      createdAt: _parseFlexibleDate(j['createdAt']),
       note: j['note']?.toString() ?? '',
     );
   }
@@ -83,12 +83,10 @@ class SheetsRepo {
       barcode: j['barcode']?.toString() ?? '',
       name: j['name']?.toString() ?? '',
       location: (j['location']?.toString().isEmpty ?? true) ? '家裡' : j['location'].toString(),
-      dateTime: DateTime.tryParse(j['dateTime']?.toString() ?? '') ?? DateTime.now(),
+      dateTime: _parseDateAndTime(j['date'], j['time']),
       type: j['type']?.toString() ?? '',
-      damaged: j['damaged'] == true || j['damaged']?.toString() == 'true',
-      expiryDate: j['expiryDate'] == null || j['expiryDate'].toString().isEmpty
-          ? null
-          : DateTime.tryParse(j['expiryDate'].toString()),
+      damaged: j['damaged'] == true || j['damaged']?.toString() == 'true' || j['damaged']?.toString() == '是',
+      expiryDate: _parseFlexibleDate(j['expiryDate']),
       note: j['note']?.toString() ?? '',
     );
   }
@@ -98,10 +96,14 @@ class SheetsRepo {
         'barcode': t.barcode,
         'name': t.name,
         'location': t.location,
-        'dateTime': t.dateTime.toIso8601String(),
+        'date': '${t.dateTime.year}/${t.dateTime.month}/${t.dateTime.day}',
+        'time':
+            '${t.dateTime.hour.toString().padLeft(2, '0')}:${t.dateTime.minute.toString().padLeft(2, '0')}',
         'type': t.type,
         'damaged': t.damaged,
-        'expiryDate': t.expiryDate?.toIso8601String(),
+        'expiryDate': t.expiryDate == null
+            ? null
+            : '${t.expiryDate!.year}/${t.expiryDate!.month}/${t.expiryDate!.day}',
         'note': t.note,
       };
 
@@ -116,4 +118,47 @@ class SheetsRepo {
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString());
   }
+
+  /// Google Sheets may have auto-typed a "2026/5/6"-looking column as an
+  /// actual Date, in which case Apps Script hands it back as a full ISO
+  /// string instead of the plain text we'd get from a manually-typed cell.
+  /// Handle both.
+  static DateTime? _parseFlexibleDate(Object? v) {
+    if (v == null) return null;
+    final s = v.toString().trim();
+    if (s.isEmpty) return null;
+    final iso = DateTime.tryParse(s);
+    if (iso != null) return iso;
+    final parts = s.split(RegExp(r'[/-]'));
+    if (parts.length == 3) {
+      final y = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      final d = int.tryParse(parts[2]);
+      if (y != null && m != null && d != null) return DateTime(y, m, d);
+    }
+    return null;
+  }
+
+  /// Same idea, but for a time-only value: Google Sheets represents a bare
+  /// time as a Date on the 1899-12-30 epoch, so an ISO string here only
+  /// contributes its hour/minute/second, not its date.
+  static DateTime _parseDateAndTime(Object? dateVal, Object? timeVal) {
+    final date = _parseFlexibleDate(dateVal) ?? DateTime.now();
+    final timeStr = timeVal?.toString().trim() ?? '';
+    if (timeStr.isEmpty) return date;
+
+    final isoTime = DateTime.tryParse(timeStr);
+    if (isoTime != null) {
+      return DateTime(date.year, date.month, date.day, isoTime.hour, isoTime.minute, isoTime.second);
+    }
+    final tParts = timeStr.split(':');
+    final h = int.tryParse(tParts.elementAtOrNull(0) ?? '') ?? 0;
+    final mi = int.tryParse(tParts.elementAtOrNull(1) ?? '') ?? 0;
+    final se = int.tryParse(tParts.elementAtOrNull(2) ?? '') ?? 0;
+    return DateTime(date.year, date.month, date.day, h, mi, se);
+  }
+}
+
+extension _ElementAtOrNull<T> on List<T> {
+  T? elementAtOrNull(int index) => index >= 0 && index < length ? this[index] : null;
 }
