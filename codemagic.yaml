@@ -1,0 +1,22 @@
+workflows:
+  ios-unsigned-altstore:
+    name: iOS Unsigned Build (for AltStore sideloading)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Build iOS (unsigned, no code signing needed)
+        script: flutter build ios --release --no-codesign
+      - name: Package as unsigned .ipa
+        script: |
+          set -e
+          mkdir -p build/ios/iphoneos/Payload
+          cp -r build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/
+          cd build/ios/iphoneos
+          zip -r "$CM_BUILD_DIR/庫存管理.ipa" Payload
+    artifacts:
+      - 庫存管理.ipa
