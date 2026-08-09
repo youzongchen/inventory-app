@@ -17,6 +17,8 @@ workflows:
           mkdir -p build/ios/iphoneos/Payload
           cp -r build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/
           cd build/ios/iphoneos
-          zip -r "$CM_BUILD_DIR/庫存管理.ipa" Payload
+          zip -r "$CM_BUILD_DIR/inventory-app-unsigned.ipa" Payload
+          ls -la "$CM_BUILD_DIR"/*.ipa
     artifacts:
-      - 庫存管理.ipa
+      - "*.ipa"
+      - inventory-app-unsigned.ipa
