@@ -1,9 +1,18 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'state/inventory_state.dart';
 import 'screens/startup_screen.dart';
 
 void main() {
+  // WebKit's native BarcodeDetector API on iOS Safari reports formats as
+  // supported but frequently fails to actually decode EAN/UPC product
+  // barcodes (as opposed to QR codes) - force the WASM ZXing reader there
+  // instead, since it doesn't rely on that browser API.
+  if (kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+    MobileScannerPlatform.instance.setWebBarcodeReader(WebBarcodeReader.zxingWasm);
+  }
   runApp(const InventoryApp());
 }
 

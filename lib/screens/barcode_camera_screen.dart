@@ -56,7 +56,21 @@ class _BarcodeCameraScreenState extends State<BarcodeCameraScreen> {
       ),
       body: Stack(
         children: [
-          MobileScanner(controller: _controller, onDetect: _onDetect),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _onDetect,
+            errorBuilder: (context, error) => Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '無法開啟相機：${error.errorDetails?.message ?? error.errorCode.message}\n'
+                  '請確認已允許此網站使用相機權限（Safari 設定 → 相機）。',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+          ),
           Center(
             child: Container(
               width: 260,
