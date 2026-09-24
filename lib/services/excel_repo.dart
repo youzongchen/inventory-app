@@ -7,9 +7,13 @@ const _sheetProducts = '資料庫';
 const _sheetTx = '交易紀錄';
 const _sheetOverview = '總覽';
 
+// 尺寸放在最後一欄（而不是插進「品牌」後面），是為了不打亂既有 .xlsx 檔案裡
+// 舊資料的欄位順序 - 這裡是用「位置」讀寫欄位，不是看標題文字，插在中間會讓
+// 所有舊檔案從那一欄之後全部錯位。表單上的欄位順序（品牌之後接尺寸）不受影響，
+// 那是 UI 呈現順序，跟底層儲存順序是分開的。
 const _productHeaders = [
   '條碼', '品名', '類別', '品牌', '整箱或散裝', '箱入數',
-  '對應散裝條碼', '成本', '售價', '安全庫存量', '建立日期', '備註',
+  '對應散裝條碼', '成本', '售價', '安全庫存量', '建立日期', '備註', '尺寸',
 ];
 
 const _txHeaders = ['交易編號', '條碼', '品名', '地點', '日期', '時間', '類型', '損壞', '有效期限', '備註'];
@@ -87,6 +91,9 @@ class ExcelRepo {
           safetyStock: _int(row.elementAtOrNull(9)?.value),
           createdAt: DateTime.tryParse(_s(row.elementAtOrNull(10)?.value)),
           note: _s(row.elementAtOrNull(11)?.value),
+          size: _s(row.elementAtOrNull(12)?.value).isEmpty
+              ? null
+              : _s(row.elementAtOrNull(12)?.value),
         ));
       }
     }
@@ -177,6 +184,7 @@ class ExcelRepo {
         _cv(p.safetyStock),
         _cv(p.createdAt?.toIso8601String().substring(0, 10)),
         _cv(p.note),
+        _cv(p.size),
       ]);
     }
 
@@ -248,16 +256,17 @@ class ExcelRepo {
       final damagedOut = records.where((r) => r.type == '出' && r.damaged).length;
       final damagedInStock = (damagedIn - damagedOut).clamp(0, 1 << 30);
       records.sort((a, b) => a.dateTime.compareTo(b.dateTime));
-      final expiries = records
+      final expiryBatches = records
           .where((r) => r.type == '入' && r.expiryDate != null)
-          .map((r) => r.expiryDate!)
           .toList()
-        ..sort();
+        ..sort((a, b) => a.expiryDate!.compareTo(b.expiryDate!));
+      final nearestBatch = expiryBatches.isEmpty ? null : expiryBatches.first;
       rows.add(OverviewRow(
         barcode: barcode,
         name: product?.name ?? records.first.name,
         category: product?.category ?? '待分類',
         brand: product?.brand ?? '',
+        size: product?.size,
         location: location,
         currentQty: totalIn - totalOut,
         totalIn: totalIn,
@@ -267,7 +276,8 @@ class ExcelRepo {
         cost: product?.cost,
         safetyStock: product?.safetyStock,
         lastActivity: records.last.dateTime,
-        nearestExpiry: expiries.isEmpty ? null : expiries.first,
+        nearestExpiry: nearestBatch?.expiryDate,
+        nearestExpiryEntryTime: nearestBatch?.dateTime,
       ));
     });
     rows.sort((a, b) {

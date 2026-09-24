@@ -19,6 +19,7 @@ class StartupScreen extends StatefulWidget {
 class _StartupScreenState extends State<StartupScreen> {
   final _urlCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
+  final _sheetUrlCtrl = TextEditingController();
   bool _showSheetsForm = false;
 
   @override
@@ -31,25 +32,28 @@ class _StartupScreenState extends State<StartupScreen> {
   void dispose() {
     _urlCtrl.dispose();
     _keyCtrl.dispose();
+    _sheetUrlCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _init() async {
     final state = context.read<InventoryState>();
+    // Pre-fill the Sheets form either way (all platforms now support Sheets,
+    // not just web) so switching to it doesn't start blank.
+    final sheets = await state.restoreSheetsConfig();
+    if (sheets != null) {
+      final (url, key, sheetUrl) = sheets;
+      _urlCtrl.text = url;
+      _keyCtrl.text = key;
+      _sheetUrlCtrl.text = sheetUrl ?? '';
+    }
     if (kIsWeb) {
-      // Pre-fill the Sheets form either way so switching to it doesn't start blank.
-      final sheets = await state.restoreSheetsConfig();
-      if (sheets != null) {
-        final (url, key) = sheets;
-        _urlCtrl.text = url;
-        _keyCtrl.text = key;
-      }
       // Web has no persisted local file path, but a previously-connected
       // Google Sheet is worth silently reconnecting to - unless the user
       // explicitly came back here to pick something else.
       if (widget.autoRestore && sheets != null) {
-        final (url, key) = sheets;
-        await state.loadFromSheets(url, key);
+        final (url, key, sheetUrl) = sheets;
+        await state.loadFromSheets(url, key, sheetUrl: sheetUrl);
         if (state.loadError == null && mounted) {
           _goHome();
           return;
@@ -59,9 +63,18 @@ class _StartupScreenState extends State<StartupScreen> {
       return;
     }
     if (!widget.autoRestore) return;
+    // Desktop/mobile: prefer the last local file if one was used, otherwise
+    // fall back to a previously-connected Google Sheet.
     final lastPath = await state.restoreLastPath();
     if (lastPath != null) {
       await state.loadFile(lastPath);
+      if (state.loadError == null && mounted) {
+        _goHome();
+        return;
+      }
+    } else if (sheets != null) {
+      final (url, key, sheetUrl) = sheets;
+      await state.loadFromSheets(url, key, sheetUrl: sheetUrl);
       if (state.loadError == null && mounted) {
         _goHome();
         return;
@@ -91,7 +104,7 @@ class _StartupScreenState extends State<StartupScreen> {
     final key = _keyCtrl.text.trim();
     if (url.isEmpty || key.isEmpty) return;
     final state = context.read<InventoryState>();
-    await state.loadFromSheets(url, key);
+    await state.loadFromSheets(url, key, sheetUrl: _sheetUrlCtrl.text.trim());
     if (state.loadError == null && mounted) {
       _goHome();
     } else if (mounted) {
@@ -136,17 +149,15 @@ class _StartupScreenState extends State<StartupScreen> {
                       icon: const Icon(Icons.folder_open),
                       label: const Text('選擇 Excel 檔案'),
                     ),
-                    if (kIsWeb) ...[
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        child: Text('或', style: TextStyle(color: Colors.grey)),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => setState(() => _showSheetsForm = true),
-                        icon: const Icon(Icons.cloud_outlined),
-                        label: const Text('連接 Google 試算表'),
-                      ),
-                    ],
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text('或', style: TextStyle(color: Colors.grey)),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => setState(() => _showSheetsForm = true),
+                      icon: const Icon(Icons.cloud_outlined),
+                      label: const Text('連接 Google 試算表'),
+                    ),
                   ] else ...[
                     const Text(
                       '連接 Google 試算表',
@@ -178,6 +189,18 @@ class _StartupScreenState extends State<StartupScreen> {
                         obscureText: true,
                         decoration: const InputDecoration(
                           labelText: '密鑰（SECRET_KEY）',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: 360,
+                      child: TextField(
+                        controller: _sheetUrlCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Google 試算表網址（選填，供「庫存管理」頁的編輯按鈕使用）',
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),

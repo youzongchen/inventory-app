@@ -1,6 +1,8 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:pluto_grid/pluto_grid.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models.dart';
 import '../state/inventory_state.dart';
 import '../widgets/edit_product_dialog.dart';
@@ -23,6 +25,37 @@ Color _colorFor(String key, List<String> keys) {
 
 const _mobileBreakpoint = 700.0;
 
+/// Opens the workbook backing the current data source in whatever the OS/
+/// browser considers the default handler - the local .xlsx via the file
+/// picker's path (desktop/mobile), or the actual Google Sheet URL (web +
+/// Sheets mode, if the user bothered to fill it in when connecting). There's
+/// nothing to open for the web "local file" mode - only a bytes copy lives in
+/// browser memory, no real path exists.
+Future<void> _openUnderlyingFile(BuildContext context, InventoryState state) async {
+  Uri? target;
+  if (state.filePath != null) {
+    target = Uri.file(state.filePath!);
+  } else if (state.sheetsSheetUrl != null && state.sheetsSheetUrl!.isNotEmpty) {
+    target = Uri.tryParse(state.sheetsSheetUrl!);
+  }
+  if (target == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('此資料來源模式沒有可直接開啟的底層檔案（網頁版本機檔案模式僅存在瀏覽器記憶體中）')),
+    );
+    return;
+  }
+  try {
+    final ok = await launchUrl(target, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('無法開啟：$target')));
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('開啟失敗：$e')));
+    }
+  }
+}
+
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -34,6 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _location = '全部';
   String _category = '全部';
   String _brand = '全部';
+  String _size = '全部';
   String _status = '良品'; // '良品' or '毀損' - which stock to look at
   final _searchCtrl = TextEditingController();
   String _search = '';
@@ -49,9 +83,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_brand != '全部') {
       allRows = allRows.where((r) => r.brand == _brand).toList();
     }
+    if (_size != '全部') {
+      allRows = allRows.where((r) => (r.size ?? '') == _size).toList();
+    }
     allRows = allRows.where((r) => _qtyFor(r) > 0).toList();
     final categories = ['全部', ...state.categories];
     final brands = ['全部', ...state.brands];
+    final sizes = ['全部', ...state.sizes];
 
     // Chart 1: quantity distribution across all categories (respects location filter only).
     final byCategory = <String, int>{};
@@ -139,7 +177,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // fixed-height chart past the bottom of the screen. Let the keyboard
       // overlay instead - the search field stays visible above it either way.
       resizeToAvoidBottomInset: false,
-      appBar: AppBar(title: const Text('庫存管理')),
+      appBar: AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('庫存管理'),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.edit, size: 20),
+              tooltip: '開啟底層 Excel / 試算表編輯更底層的資料',
+              onPressed: () => _openUnderlyingFile(context, state),
+            ),
+          ],
+        ),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -174,6 +225,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   value: _brand,
                   items: brands.map((b) => DropdownMenuItem(value: b, child: Text('品牌：$b'))).toList(),
                   onChanged: (v) => setState(() => _brand = v!),
+                ),
+                DropdownButton<String>(
+                  value: _size,
+                  items: sizes.map((s) => DropdownMenuItem(value: s, child: Text('尺寸：$s'))).toList(),
+                  onChanged: (v) => setState(() => _size = v!),
                 ),
                 SizedBox(
                   width: 260,
@@ -257,69 +313,261 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Card(
                 child: tableRows.isEmpty
                     ? const Center(child: Text('沒有符合條件的資料', style: TextStyle(color: Colors.grey)))
-                    : SingleChildScrollView(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            columns: [
-                              const DataColumn(label: Text('')),
-                              const DataColumn(label: Text('品牌')),
-                              const DataColumn(label: Text('類別')),
-                              const DataColumn(label: Text('品名')),
-                              const DataColumn(label: Text('條碼')),
-                              const DataColumn(label: Text('地點')),
-                              DataColumn(label: Text('$_status庫存'), numeric: true),
-                              const DataColumn(label: Text('良品'), numeric: true),
-                              const DataColumn(label: Text('損壞在庫'), numeric: true),
-                              const DataColumn(label: Text('成本'), numeric: true),
-                              const DataColumn(label: Text('庫存金額'), numeric: true),
-                              const DataColumn(label: Text('最近效期')),
-                            ],
-                            rows: tableRows
-                                .map((r) => DataRow(cells: [
-                                      DataCell(IconButton(
-                                        icon: const Icon(Icons.edit, size: 18),
-                                        tooltip: '編輯',
-                                        onPressed: () => showEditProductDialog(context, r),
-                                      )),
-                                      DataCell(Text(r.brand)),
-                                      DataCell(Text(r.category)),
-                                      DataCell(Text(r.name)),
-                                      DataCell(Text(r.barcode)),
-                                      DataCell(Text(r.location)),
-                                      DataCell(Text(
-                                        '${_qtyFor(r)}',
-                                        style: TextStyle(
-                                          color: r.safetyStock != null && _qtyFor(r) <= r.safetyStock!
-                                              ? Colors.red
-                                              : null,
-                                          fontWeight: r.safetyStock != null && _qtyFor(r) <= r.safetyStock!
-                                              ? FontWeight.bold
-                                              : null,
-                                        ),
-                                      )),
-                                      DataCell(Text('${r.goodQty}')),
-                                      DataCell(Text(
-                                        '${r.damagedInStock}',
-                                        style: TextStyle(
-                                          color: r.damagedInStock > 0 ? Colors.orange.shade800 : null,
-                                          fontWeight: r.damagedInStock > 0 ? FontWeight.bold : null,
-                                        ),
-                                      )),
-                                      DataCell(Text(r.cost?.toStringAsFixed(0) ?? '-')),
-                                      DataCell(Text(() {
-                                        final v = _qtyFor(r) * (r.cost ?? 0);
-                                        return v > 0 ? v.toStringAsFixed(0) : '-';
-                                      }())),
-                                      DataCell(_ExpiryText(r.nearestExpiry)),
-                                    ]))
-                                .toList(),
-                          ),
-                        ),
+                    : _InventoryPlutoGrid(
+                        rows: tableRows,
+                        statusLabel: _status,
+                        qtyFor: _qtyFor,
+                        onEdit: (r) => showEditProductDialog(context, r),
                       ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The 庫存管理 table itself, built on PlutoGrid instead of DataTable so it
+/// gets (for free) a header row that stays fixed while the body scrolls,
+/// per-column drag-to-resize, and pinned/frozen leading columns.
+///
+/// PlutoGrid does NOT pick up new [rows]/[columns] automatically on rebuild
+/// (its State.didUpdateWidget only re-applies configuration/mode) - row data
+/// has to be pushed into the PlutoGridStateManager explicitly, which is what
+/// [didUpdateWidget] below does. Column definitions (including frozen/resize
+/// settings) are built once in [initState] and left alone, except for the
+/// quantity column's title, which is mutated in place when the 良品/毀損
+/// toggle changes.
+class _InventoryPlutoGrid extends StatefulWidget {
+  final List<OverviewRow> rows;
+  final String statusLabel;
+  final int Function(OverviewRow) qtyFor;
+  final void Function(OverviewRow) onEdit;
+
+  const _InventoryPlutoGrid({
+    required this.rows,
+    required this.statusLabel,
+    required this.qtyFor,
+    required this.onEdit,
+  });
+
+  @override
+  State<_InventoryPlutoGrid> createState() => _InventoryPlutoGridState();
+}
+
+class _InventoryPlutoGridState extends State<_InventoryPlutoGrid> {
+  PlutoGridStateManager? _stateManager;
+  late final List<PlutoColumn> _columns;
+  late final PlutoColumn _qtyColumn;
+  String _lastSignature = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _qtyColumn = PlutoColumn(
+      title: '${widget.statusLabel}庫存',
+      field: 'qty',
+      type: PlutoColumnType.text(),
+      textAlign: PlutoColumnTextAlign.right,
+      width: 110,
+      enableColumnDrag: false,
+      enableSorting: false,
+      enableContextMenu: false,
+      enableFilterMenuItem: false,
+      renderer: (ctx) {
+        final row = _rowFor(ctx);
+        final qty = row == null ? ctx.cell.value.toString() : widget.qtyFor(row).toString();
+        final urgent = row != null && row.safetyStock != null && widget.qtyFor(row) <= row.safetyStock!;
+        return Text(
+          qty,
+          textAlign: TextAlign.right,
+          style: TextStyle(
+            color: urgent ? Colors.red : null,
+            fontWeight: urgent ? FontWeight.bold : null,
+          ),
+        );
+      },
+    );
+    _columns = [
+      PlutoColumn(
+        title: '',
+        field: 'edit',
+        type: PlutoColumnType.text(),
+        width: 56,
+        minWidth: 56,
+        frozen: PlutoColumnFrozen.start,
+        enableColumnDrag: false,
+        enableSorting: false,
+        enableContextMenu: false,
+        enableFilterMenuItem: false,
+        enableDropToResize: false,
+        renderer: (ctx) {
+          final row = _rowFor(ctx);
+          return IconButton(
+            icon: const Icon(Icons.edit, size: 18),
+            tooltip: '編輯',
+            onPressed: row == null ? null : () => widget.onEdit(row),
+          );
+        },
+      ),
+      _textColumn('brand', '品牌', frozen: true),
+      _textColumn('category', '類別', frozen: true),
+      _textColumn('name', '品名', frozen: true, width: 160),
+      _textColumn('size', '尺寸', width: 90),
+      _textColumn('barcode', '條碼', width: 130),
+      _textColumn('location', '地點', width: 90),
+      _qtyColumn,
+      _numberColumn('good', '良品'),
+      PlutoColumn(
+        title: '損壞在庫',
+        field: 'damagedInStock',
+        type: PlutoColumnType.text(),
+        textAlign: PlutoColumnTextAlign.right,
+        width: 100,
+        enableColumnDrag: false,
+        enableSorting: false,
+        enableContextMenu: false,
+        enableFilterMenuItem: false,
+        renderer: (ctx) {
+          final row = _rowFor(ctx);
+          final damaged = row?.damagedInStock ?? 0;
+          return Text(
+            '$damaged',
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: damaged > 0 ? Colors.orange.shade800 : null,
+              fontWeight: damaged > 0 ? FontWeight.bold : null,
+            ),
+          );
+        },
+      ),
+      _numberColumn('cost', '成本'),
+      _numberColumn('stockValue', '庫存金額', width: 110),
+      PlutoColumn(
+        title: '最近效期',
+        field: 'nearestExpiry',
+        type: PlutoColumnType.text(),
+        width: 110,
+        enableColumnDrag: false,
+        enableSorting: false,
+        enableContextMenu: false,
+        enableFilterMenuItem: false,
+        renderer: (ctx) => _ExpiryText(_rowFor(ctx)?.nearestExpiry),
+      ),
+      PlutoColumn(
+        title: '入庫時間',
+        field: 'entryTime',
+        type: PlutoColumnType.text(),
+        width: 130,
+        enableColumnDrag: false,
+        enableSorting: false,
+        enableContextMenu: false,
+        enableFilterMenuItem: false,
+        renderer: (ctx) => _EntryTimeText(_rowFor(ctx)?.nearestExpiryEntryTime),
+      ),
+    ];
+  }
+
+  PlutoColumn _textColumn(String field, String title, {bool frozen = false, double width = 100}) {
+    return PlutoColumn(
+      title: title,
+      field: field,
+      type: PlutoColumnType.text(),
+      width: width,
+      frozen: frozen ? PlutoColumnFrozen.start : PlutoColumnFrozen.none,
+      enableColumnDrag: false,
+      enableSorting: false,
+      enableContextMenu: false,
+      enableFilterMenuItem: false,
+    );
+  }
+
+  PlutoColumn _numberColumn(String field, String title, {double width = 90}) {
+    return PlutoColumn(
+      title: title,
+      field: field,
+      type: PlutoColumnType.text(),
+      textAlign: PlutoColumnTextAlign.right,
+      width: width,
+      enableColumnDrag: false,
+      enableSorting: false,
+      enableContextMenu: false,
+      enableFilterMenuItem: false,
+    );
+  }
+
+  /// Rows carry their own barcode/location so renderers can look the matching
+  /// [OverviewRow] back up regardless of any internal reordering PlutoGrid
+  /// might do - safer than trusting rowIdx to line up with widget.rows.
+  OverviewRow? _rowFor(PlutoColumnRendererContext ctx) {
+    final barcode = ctx.row.cells['barcode']!.value as String;
+    final location = ctx.row.cells['location']!.value as String;
+    for (final r in widget.rows) {
+      if (r.barcode == barcode && r.location == location) return r;
+    }
+    return null;
+  }
+
+  List<PlutoRow> _buildRows() {
+    return widget.rows.map((r) {
+      final stockValue = widget.qtyFor(r) * (r.cost ?? 0);
+      return PlutoRow(cells: {
+        'edit': PlutoCell(value: ''),
+        'brand': PlutoCell(value: r.brand),
+        'category': PlutoCell(value: r.category),
+        'name': PlutoCell(value: r.name),
+        'size': PlutoCell(value: r.size ?? ''),
+        'barcode': PlutoCell(value: r.barcode),
+        'location': PlutoCell(value: r.location),
+        'qty': PlutoCell(value: widget.qtyFor(r)),
+        'good': PlutoCell(value: r.goodQty),
+        'damagedInStock': PlutoCell(value: r.damagedInStock),
+        'cost': PlutoCell(value: r.cost?.toStringAsFixed(0) ?? '-'),
+        'stockValue': PlutoCell(value: stockValue > 0 ? stockValue.toStringAsFixed(0) : '-'),
+        'nearestExpiry': PlutoCell(value: r.nearestExpiry?.toIso8601String() ?? ''),
+        'entryTime': PlutoCell(value: r.nearestExpiryEntryTime?.toIso8601String() ?? ''),
+      });
+    }).toList();
+  }
+
+  String _signature() => widget.rows
+      .map((r) =>
+          '${r.barcode}#${r.location}#${widget.qtyFor(r)}#${r.goodQty}#${r.damagedInStock}#${r.cost}#${r.size}#${r.nearestExpiry}#${r.nearestExpiryEntryTime}')
+      .join(';');
+
+  @override
+  void didUpdateWidget(covariant _InventoryPlutoGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.statusLabel != widget.statusLabel) {
+      _qtyColumn.title = '${widget.statusLabel}庫存';
+      _stateManager?.notifyListeners();
+    }
+    final sig = _signature();
+    if (sig != _lastSignature) {
+      _lastSignature = sig;
+      final mgr = _stateManager;
+      if (mgr != null) {
+        mgr.removeAllRows(notify: false);
+        mgr.appendRows(_buildRows());
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _lastSignature = _signature();
+    return PlutoGrid(
+      columns: _columns,
+      rows: _buildRows(),
+      onLoaded: (event) {
+        _stateManager = event.stateManager;
+        _stateManager!.setShowColumnFilter(false);
+      },
+      configuration: const PlutoGridConfiguration(
+        style: PlutoGridStyleConfig(
+          gridBorderColor: Colors.transparent,
+          borderColor: Color(0xFFEEEEEE),
         ),
       ),
     );
@@ -371,6 +619,22 @@ class _ExpiryText extends StatelessWidget {
         color: urgent ? Colors.red : null,
         fontWeight: urgent ? FontWeight.bold : null,
       ),
+    );
+  }
+}
+
+/// Plain (non-urgency-colored) date+time display for the 入庫時間 column.
+class _EntryTimeText extends StatelessWidget {
+  final DateTime? time;
+  const _EntryTimeText(this.time);
+
+  @override
+  Widget build(BuildContext context) {
+    if (time == null) return const Text('-');
+    final t = time!;
+    return Text(
+      '${t.year}/${t.month}/${t.day} ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}',
+      style: const TextStyle(fontSize: 12),
     );
   }
 }

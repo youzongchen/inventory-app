@@ -78,7 +78,14 @@ class _ScanScreenState extends State<ScanScreen> {
     if (state.session.isEmpty) return;
     final type = widget.mode == 'in' ? '入' : '出';
     final count = state.session.length;
-    await state.commitSession(type);
+    try {
+      await state.commitSession(type);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('存檔失敗：$e')));
+      }
+      return; // session is left intact so the user can retry once the connection is fixed
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已登錄 $count 筆紀錄')),
@@ -107,7 +114,14 @@ class _ScanScreenState extends State<ScanScreen> {
                     // Force a numeric keypad so a phone's default Chinese IME (Zhuyin etc.)
                     // never intercepts/composes the raw keystrokes coming from a barcode
                     // gun or the manual entry - all barcodes here are numeric (EAN/UPC).
-                    keyboardType: TextInputType.number,
+                    // iOS is the one exception: its number pad doesn't reliably hide
+                    // itself once a Bluetooth HID scanner is connected (known iOS
+                    // behavior), which is what shows up as "掃描槍跳出數字鍵盤" - the
+                    // plain text keyboard type does dismiss correctly there, and
+                    // digitsOnly below still enforces numeric-only input either way.
+                    keyboardType: defaultTargetPlatform == TargetPlatform.iOS
+                        ? TextInputType.text
+                        : TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: '條碼機掃描 / 手動輸入條碼後按 Enter',
                       prefixIcon: Icon(Icons.qr_code_scanner),
@@ -222,6 +236,33 @@ class _ScanScreenState extends State<ScanScreen> {
                                         ),
                                       ),
                                       const SizedBox(width: 12),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Text('數量', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                          IconButton(
+                                            icon: const Icon(Icons.remove_circle_outline, size: 18),
+                                            visualDensity: VisualDensity.compact,
+                                            tooltip: '減少',
+                                            onPressed: () => state.setQty(index, row.qty - 1),
+                                          ),
+                                          SizedBox(
+                                            width: 28,
+                                            child: Text(
+                                              '${row.qty}',
+                                              textAlign: TextAlign.center,
+                                              style: const TextStyle(fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.add_circle_outline, size: 18),
+                                            visualDensity: VisualDensity.compact,
+                                            tooltip: '增加',
+                                            onPressed: () => state.setQty(index, row.qty + 1),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(width: 12),
                                       Expanded(
                                         child: TextFormField(
                                           initialValue: row.note,
@@ -249,7 +290,10 @@ class _ScanScreenState extends State<ScanScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                Text('共 ${state.session.length} 筆', style: const TextStyle(color: Colors.grey)),
+                Text(
+                  '共 ${state.session.length} 筆・合計 ${state.session.fold<int>(0, (sum, s) => sum + s.qty)} 件',
+                  style: const TextStyle(color: Colors.grey),
+                ),
                 OutlinedButton.icon(
                   onPressed: state.session.isEmpty ? null : state.undoLastScan,
                   icon: const Icon(Icons.undo),

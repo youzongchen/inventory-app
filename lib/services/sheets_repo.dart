@@ -11,7 +11,7 @@ class SheetsRepo {
     final base = Uri.parse(apiUrl);
     final uri = base.replace(queryParameters: {...base.queryParameters, 'key': key});
     final resp = await http.get(uri);
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final body = _decodeOrThrow(resp);
     if (body['error'] != null) throw Exception(body['error']);
 
     final products = (body['products'] as List)
@@ -34,15 +34,62 @@ class SheetsRepo {
       'products': products.map(_productToJson).toList(),
       'transactions': tx.map(_txToJson).toList(),
     };
-    final resp = await http.post(
-      Uri.parse(apiUrl),
-      // text/plain avoids a CORS preflight that Apps Script Web Apps don't
-      // handle - the body is still JSON text, GAS just parses it manually.
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode(payload),
-    );
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final resp = await _postThenFollowRedirectAsGet(Uri.parse(apiUrl), jsonEncode(payload));
+    final body = _decodeOrThrow(resp);
     if (body['error'] != null) throw Exception(body['error']);
+  }
+
+  /// Apps Script Web Apps answer a POST with a 302 to a one-off
+  /// script.googleusercontent.com "echo" URL that holds the actual result -
+  /// and that echo URL only accepts GET (POSTing to it answers 405 Method Not
+  /// Allowed). Some HTTP stacks auto-downgrade a redirected POST to GET on
+  /// their own per the 301/302/303 spec, but that apparently isn't reliably
+  /// happening here - the symptom was an empty response body instead of the
+  /// real `{"success":true}`. So the redirect is followed explicitly instead
+  /// of trusting the client's default redirect handling.
+  static Future<http.Response> _postThenFollowRedirectAsGet(Uri uri, String body) async {
+    final client = http.Client();
+    try {
+      final request = http.Request('POST', uri)
+        ..headers['Content-Type'] = 'text/plain;charset=utf-8'
+        ..body = body
+        ..followRedirects = false;
+      var resp = await http.Response.fromStream(await client.send(request));
+      var hops = 0;
+      while (resp.statusCode >= 300 && resp.statusCode < 400 && hops < 5) {
+        final location = resp.headers['location'];
+        if (location == null) break;
+        resp = await client.get(Uri.parse(location));
+        hops++;
+      }
+      return resp;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Apps Script Web Apps return plain JSON on success, but a wrong/expired
+  /// URL, a not-yet-redeployed script, or an auth wall can all come back as an
+  /// empty body or an HTML error page instead - `jsonDecode` on that throws a
+  /// cryptic `FormatException: Unexpected end of input`. Turn that into a
+  /// message that actually points at the fix.
+  static Map<String, dynamic> _decodeOrThrow(http.Response resp) {
+    if (resp.body.trim().isEmpty) {
+      throw Exception(
+        'Google 試算表沒有回應資料（HTTP ${resp.statusCode}）。'
+        '請確認 Apps Script 網頁應用程式網址/密鑰正確，且改完 Code.gs 後有重新「部署 → 新版本」。',
+      );
+    }
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      throw Exception('Google 試算表回應格式不正確（非預期的 JSON 結構）。');
+    } on FormatException {
+      throw Exception(
+        'Google 試算表回應內容不是有效的 JSON（HTTP ${resp.statusCode}），'
+        '通常代表網址錯誤或指到了登入頁面，而不是 Apps Script 本身。',
+      );
+    }
   }
 
   static Product _productFromJson(Map<String, dynamic> j) {
@@ -51,6 +98,7 @@ class SheetsRepo {
       name: j['name']?.toString() ?? '',
       category: (j['category']?.toString().isEmpty ?? true) ? '待分類' : j['category'].toString(),
       brand: j['brand']?.toString() ?? '',
+      size: (j['size']?.toString().isEmpty ?? true) ? null : j['size'].toString(),
       unitType: (j['unitType']?.toString().isEmpty ?? true) ? '散裝' : j['unitType'].toString(),
       boxQty: _toInt(j['boxQty']),
       linkedLooseBarcode: (j['linkedLooseBarcode']?.toString().isEmpty ?? true) ? null : j['linkedLooseBarcode'].toString(),
@@ -67,6 +115,7 @@ class SheetsRepo {
         'name': p.name,
         'category': p.category,
         'brand': p.brand,
+        'size': p.size,
         'unitType': p.unitType,
         'boxQty': p.boxQty,
         'linkedLooseBarcode': p.linkedLooseBarcode,

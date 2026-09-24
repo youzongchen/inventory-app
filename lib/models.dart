@@ -6,6 +6,7 @@ class Product {
   String name;
   String category;
   String brand;
+  String? size; // 尺寸, optional free-text
   String unitType; // '散裝' or '整箱'
   int? boxQty; // 箱入數 - only meaningful when unitType == '整箱'
   String? linkedLooseBarcode; // 對應散裝條碼 - only meaningful when unitType == '整箱'
@@ -20,6 +21,7 @@ class Product {
     required this.name,
     this.category = '待分類',
     this.brand = '',
+    this.size,
     this.unitType = '散裝',
     this.boxQty,
     this.linkedLooseBarcode,
@@ -60,6 +62,7 @@ class OverviewRow {
   final String name;
   final String category;
   final String brand;
+  final String? size;
   final String location;
   final int currentQty;
   final int totalIn;
@@ -70,12 +73,14 @@ class OverviewRow {
   final int? safetyStock;
   final DateTime? lastActivity;
   final DateTime? nearestExpiry; // soonest 有效期限 recorded among 入 transactions
+  final DateTime? nearestExpiryEntryTime; // 入庫時間 of the batch carrying nearestExpiry
 
   OverviewRow({
     required this.barcode,
     required this.name,
     required this.category,
     required this.brand,
+    this.size,
     required this.location,
     required this.currentQty,
     required this.totalIn,
@@ -86,6 +91,7 @@ class OverviewRow {
     this.safetyStock,
     this.lastActivity,
     this.nearestExpiry,
+    this.nearestExpiryEntryTime,
   });
 
   double get stockValue => (cost ?? 0) * currentQty;
@@ -104,6 +110,7 @@ class PendingScan {
   bool locked;
   bool damaged;
   DateTime? expiryDate; // 有效期限, optional
+  int qty; // 這一掃代表幾件 - 預設 1，同款懶得一件一件刷時可手動調整
 
   PendingScan({
     required this.barcode,
@@ -114,5 +121,6 @@ class PendingScan {
     this.locked = true,
     this.damaged = false,
     this.expiryDate,
+    this.qty = 1,
   });
 }

@@ -24,12 +24,44 @@ class NewProductDialog extends StatefulWidget {
 class _NewProductDialogState extends State<NewProductDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
+  final _categoryCtrl = TextEditingController(text: kCategories.first);
   final _brandCtrl = TextEditingController();
+  final _sizeCtrl = TextEditingController();
   final _costCtrl = TextEditingController();
+  final _priceCtrl = TextEditingController();
+  final _marginCtrl = TextEditingController();
   final _boxQtyCtrl = TextEditingController();
-  String _category = kCategories.first;
   String _unitType = '散裝';
   String? _linkedBarcode;
+  bool _useMarginCalc = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _costCtrl.addListener(_recomputeAutoPrice);
+    _marginCtrl.addListener(_recomputeAutoPrice);
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _categoryCtrl.dispose();
+    _brandCtrl.dispose();
+    _sizeCtrl.dispose();
+    _costCtrl.dispose();
+    _priceCtrl.dispose();
+    _marginCtrl.dispose();
+    _boxQtyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _recomputeAutoPrice() {
+    if (!_useMarginCalc) return;
+    final cost = double.tryParse(_costCtrl.text);
+    final margin = double.tryParse(_marginCtrl.text);
+    if (cost == null || margin == null) return;
+    _priceCtrl.text = (cost * (1 + margin / 100)).toStringAsFixed(0);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,13 +94,24 @@ class _NewProductDialogState extends State<NewProductDialog> {
                     (v == null || v.trim().isEmpty) ? '請輸入品名' : null,
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _category,
-                decoration: const InputDecoration(labelText: '類別'),
-                items: kCategories
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: (v) => setState(() => _category = v!),
+              Autocomplete<String>(
+                optionsBuilder: (v) {
+                  final opts = <String>{...kCategories, ...state.categories};
+                  if (v.text.trim().isEmpty) return opts;
+                  return opts.where(
+                    (c) => c.toLowerCase().contains(v.text.trim().toLowerCase()),
+                  );
+                },
+                initialValue: TextEditingValue(text: _categoryCtrl.text),
+                onSelected: (v) => _categoryCtrl.text = v,
+                fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+                  controller.addListener(() => _categoryCtrl.text = controller.text);
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: const InputDecoration(labelText: '類別（可從選單選或直接輸入新的）'),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               Autocomplete<String>(
@@ -88,6 +131,11 @@ class _NewProductDialogState extends State<NewProductDialog> {
                     decoration: const InputDecoration(labelText: '品牌（選填，可從既有品牌選或直接輸入新的）'),
                   );
                 },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _sizeCtrl,
+                decoration: const InputDecoration(labelText: '尺寸（選填）'),
               ),
               const SizedBox(height: 12),
               Row(
@@ -139,6 +187,38 @@ class _NewProductDialogState extends State<NewProductDialog> {
                   decimal: true,
                 ),
               ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Checkbox(
+                    value: _useMarginCalc,
+                    onChanged: (v) => setState(() {
+                      _useMarginCalc = v ?? false;
+                      _recomputeAutoPrice();
+                    }),
+                  ),
+                  const Expanded(child: Text('用利潤 % 自動換算訂價（勾選後輸入利潤%，訂價會即時算出）')),
+                ],
+              ),
+              if (_useMarginCalc) ...[
+                TextFormField(
+                  controller: _marginCtrl,
+                  decoration: const InputDecoration(labelText: '想賺的利潤 %'),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                ),
+                const SizedBox(height: 12),
+              ],
+              TextFormField(
+                controller: _priceCtrl,
+                enabled: !_useMarginCalc,
+                decoration: InputDecoration(
+                  labelText: '訂價（選填）',
+                  helperText: _useMarginCalc ? '由成本 × (1+利潤%) 自動算出' : null,
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
             ],
           ),
         ),
@@ -154,15 +234,27 @@ class _NewProductDialogState extends State<NewProductDialog> {
             final product = Product(
               barcode: widget.barcode,
               name: _nameCtrl.text.trim(),
-              category: _category,
+              category: _categoryCtrl.text.trim().isEmpty ? '待分類' : _categoryCtrl.text.trim(),
               brand: _brandCtrl.text.trim(),
+              size: _sizeCtrl.text.trim().isEmpty ? null : _sizeCtrl.text.trim(),
               unitType: _unitType,
               boxQty: _unitType == '整箱' ? int.tryParse(_boxQtyCtrl.text) : null,
               linkedLooseBarcode: _unitType == '整箱' ? _linkedBarcode : null,
               cost: double.tryParse(_costCtrl.text),
+              price: double.tryParse(_priceCtrl.text),
             );
-            await context.read<InventoryState>().addOrUpdateProduct(product);
-            if (context.mounted) Navigator.pop(context, product);
+            try {
+              await context.read<InventoryState>().addOrUpdateProduct(product);
+              if (context.mounted) Navigator.pop(context, product);
+            } catch (e) {
+              // Keep the dialog open on failure (e.g. Sheets connection
+              // broken) instead of looking stuck with no feedback at all.
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('存檔失敗：$e')),
+                );
+              }
+            }
           },
           child: const Text('新增'),
         ),

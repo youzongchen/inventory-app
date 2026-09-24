@@ -23,15 +23,19 @@ class EditProductDialog extends StatefulWidget {
 class _EditProductDialogState extends State<EditProductDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _categoryCtrl;
   late final TextEditingController _brandCtrl;
+  late final TextEditingController _sizeCtrl;
   late final TextEditingController _costCtrl;
+  late final TextEditingController _priceCtrl;
+  late final TextEditingController _marginCtrl;
   late final TextEditingController _safetyStockCtrl;
   late final TextEditingController _boxQtyCtrl;
   late final TextEditingController _qtyCtrl;
   late final TextEditingController _noteCtrl;
-  late String _category;
   late String _unitType;
   String? _linkedBarcode;
+  bool _useMarginCalc = false;
   Product? _originalProduct;
 
   @override
@@ -40,24 +44,33 @@ class _EditProductDialogState extends State<EditProductDialog> {
     final p = context.read<InventoryState>().findProduct(widget.row.barcode);
     _originalProduct = p;
     _nameCtrl = TextEditingController(text: p?.name ?? widget.row.name);
+    _categoryCtrl = TextEditingController(text: p?.category ?? widget.row.category);
     _brandCtrl = TextEditingController(text: p?.brand ?? widget.row.brand);
+    _sizeCtrl = TextEditingController(text: p?.size ?? '');
     _costCtrl = TextEditingController(text: p?.cost?.toStringAsFixed(0) ?? '');
+    _priceCtrl = TextEditingController(text: p?.price?.toStringAsFixed(0) ?? '');
+    _marginCtrl = TextEditingController();
     _safetyStockCtrl = TextEditingController(
       text: p?.safetyStock?.toString() ?? '',
     );
     _boxQtyCtrl = TextEditingController(text: p?.boxQty?.toString() ?? '');
     _qtyCtrl = TextEditingController(text: widget.row.currentQty.toString());
     _noteCtrl = TextEditingController(text: p?.note ?? '');
-    _category = p?.category ?? widget.row.category;
     _unitType = p?.unitType ?? '散裝';
     _linkedBarcode = p?.linkedLooseBarcode;
+    _costCtrl.addListener(_recomputeAutoPrice);
+    _marginCtrl.addListener(_recomputeAutoPrice);
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _categoryCtrl.dispose();
     _brandCtrl.dispose();
+    _sizeCtrl.dispose();
     _costCtrl.dispose();
+    _priceCtrl.dispose();
+    _marginCtrl.dispose();
     _safetyStockCtrl.dispose();
     _boxQtyCtrl.dispose();
     _qtyCtrl.dispose();
@@ -65,16 +78,26 @@ class _EditProductDialogState extends State<EditProductDialog> {
     super.dispose();
   }
 
+  void _recomputeAutoPrice() {
+    if (!_useMarginCalc) return;
+    final cost = double.tryParse(_costCtrl.text);
+    final margin = double.tryParse(_marginCtrl.text);
+    if (cost == null || margin == null) return;
+    _priceCtrl.text = (cost * (1 + margin / 100)).toStringAsFixed(0);
+  }
+
   Product _buildUpdatedProduct() {
     return Product(
       barcode: widget.row.barcode,
       name: _nameCtrl.text.trim(),
-      category: _category,
+      category: _categoryCtrl.text.trim().isEmpty ? '待分類' : _categoryCtrl.text.trim(),
       brand: _brandCtrl.text.trim(),
+      size: _sizeCtrl.text.trim().isEmpty ? null : _sizeCtrl.text.trim(),
       unitType: _unitType,
       boxQty: _unitType == '整箱' ? int.tryParse(_boxQtyCtrl.text) : null,
       linkedLooseBarcode: _unitType == '整箱' ? _linkedBarcode : null,
       cost: double.tryParse(_costCtrl.text),
+      price: double.tryParse(_priceCtrl.text),
       safetyStock: int.tryParse(_safetyStockCtrl.text),
       note: _noteCtrl.text.trim(),
     );
@@ -88,12 +111,61 @@ class _EditProductDialogState extends State<EditProductDialog> {
     return o.name != updated.name ||
         o.category != updated.category ||
         o.brand != updated.brand ||
+        o.size != updated.size ||
         o.unitType != updated.unitType ||
         o.boxQty != updated.boxQty ||
         o.linkedLooseBarcode != updated.linkedLooseBarcode ||
         o.cost != updated.cost ||
+        o.price != updated.price ||
         o.safetyStock != updated.safetyStock ||
         o.note != updated.note;
+  }
+
+  Future<void> _onDelete(BuildContext context) async {
+    final firstOk = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('刪除這筆庫存？'),
+        content: Text(
+          '將刪除條碼 ${widget.row.barcode}（${widget.row.name}）在「${widget.row.location}」的庫存與相關交易紀錄，此動作無法復原。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('刪除'),
+          ),
+        ],
+      ),
+    );
+    if (firstOk != true || !context.mounted) return;
+
+    final secondOk = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('確定要刪除嗎？'),
+        content: const Text('再次確認：這筆庫存刪除後無法復原。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('確定刪除'),
+          ),
+        ],
+      ),
+    );
+    if (secondOk != true || !context.mounted) return;
+
+    try {
+      await context.read<InventoryState>().deleteStockRow(widget.row.barcode, widget.row.location);
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('刪除失敗：$e')));
+      }
+    }
   }
 
   Future<bool> _confirmApplyToAllLocations(
@@ -159,16 +231,22 @@ class _EditProductDialogState extends State<EditProductDialog> {
       }
     }
 
-    await inventoryState.addOrUpdateProduct(updated);
-    final newQty = int.tryParse(_qtyCtrl.text);
-    if (newQty != null) {
-      await inventoryState.adjustStock(
-        widget.row.barcode,
-        widget.row.location,
-        newQty,
-      );
+    try {
+      await inventoryState.addOrUpdateProduct(updated);
+      final newQty = int.tryParse(_qtyCtrl.text);
+      if (newQty != null) {
+        await inventoryState.adjustStock(
+          widget.row.barcode,
+          widget.row.location,
+          newQty,
+        );
+      }
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('存檔失敗：$e')));
+      }
     }
-    if (context.mounted) Navigator.pop(context);
   }
 
   @override
@@ -202,18 +280,34 @@ class _EditProductDialogState extends State<EditProductDialog> {
                     (v == null || v.trim().isEmpty) ? '請輸入品名' : null,
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _category,
-                decoration: const InputDecoration(labelText: '類別'),
-                items: kCategories
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: (v) => setState(() => _category = v!),
+              Autocomplete<String>(
+                optionsBuilder: (v) {
+                  final opts = <String>{...kCategories, ...state.categories};
+                  if (v.text.trim().isEmpty) return opts;
+                  return opts.where(
+                    (c) => c.toLowerCase().contains(v.text.trim().toLowerCase()),
+                  );
+                },
+                initialValue: TextEditingValue(text: _categoryCtrl.text),
+                onSelected: (v) => _categoryCtrl.text = v,
+                fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+                  controller.addListener(() => _categoryCtrl.text = controller.text);
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: const InputDecoration(labelText: '類別（可從選單選或直接輸入新的）'),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _brandCtrl,
                 decoration: const InputDecoration(labelText: '品牌'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _sizeCtrl,
+                decoration: const InputDecoration(labelText: '尺寸（選填）'),
               ),
               const SizedBox(height: 12),
               Row(
@@ -264,6 +358,38 @@ class _EditProductDialogState extends State<EditProductDialog> {
                 ),
               ),
               const SizedBox(height: 12),
+              Row(
+                children: [
+                  Checkbox(
+                    value: _useMarginCalc,
+                    onChanged: (v) => setState(() {
+                      _useMarginCalc = v ?? false;
+                      _recomputeAutoPrice();
+                    }),
+                  ),
+                  const Expanded(child: Text('用利潤 % 自動換算訂價（勾選後輸入利潤%，訂價會即時算出）')),
+                ],
+              ),
+              if (_useMarginCalc) ...[
+                TextFormField(
+                  controller: _marginCtrl,
+                  decoration: const InputDecoration(labelText: '想賺的利潤 %'),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                ),
+                const SizedBox(height: 12),
+              ],
+              TextFormField(
+                controller: _priceCtrl,
+                enabled: !_useMarginCalc,
+                decoration: InputDecoration(
+                  labelText: '訂價',
+                  helperText: _useMarginCalc ? '由成本 × (1+利潤%) 自動算出' : null,
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _safetyStockCtrl,
                 decoration: const InputDecoration(
@@ -290,13 +416,27 @@ class _EditProductDialogState extends State<EditProductDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => _onSave(context),
-          child: const Text('儲存'),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            TextButton(
+              onPressed: () => _onDelete(context),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('刪除'),
+            ),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => _onSave(context),
+                  child: const Text('儲存'),
+                ),
+              ],
+            ),
+          ],
         ),
       ],
     );
