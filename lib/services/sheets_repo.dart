@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models.dart';
 import 'excel_repo.dart' show LoadedInventory;
@@ -34,7 +35,25 @@ class SheetsRepo {
       'products': products.map(_productToJson).toList(),
       'transactions': tx.map(_txToJson).toList(),
     };
-    final resp = await _postThenFollowRedirectAsGet(Uri.parse(apiUrl), jsonEncode(payload));
+    final resp = kIsWeb
+        // On web, package:http runs on `fetch()`. Its default redirect mode
+        // ('follow') already does the right thing transparently - the browser
+        // itself downgrades the redirected POST to GET and hands back the
+        // final JSON. Do NOT set followRedirects=false here like the IO path
+        // below: on the web client that maps to fetch's redirect:'error',
+        // which makes it throw a ClientException the instant it hits Google's
+        // 302, instead of surfacing it - i.e. it would break saving entirely.
+        ? await http.post(
+            Uri.parse(apiUrl),
+            headers: {'Content-Type': 'text/plain;charset=utf-8'},
+            body: jsonEncode(payload),
+          )
+        // On desktop/mobile (dart:io), the underlying HttpClient wasn't
+        // reliably downgrading the redirected POST to GET on its own - it was
+        // coming back with an empty body instead of the real result. So the
+        // redirect is followed explicitly here instead of trusting the
+        // client's default redirect handling.
+        : await _postThenFollowRedirectAsGetIO(Uri.parse(apiUrl), jsonEncode(payload));
     final body = _decodeOrThrow(resp);
     if (body['error'] != null) throw Exception(body['error']);
   }
@@ -42,12 +61,10 @@ class SheetsRepo {
   /// Apps Script Web Apps answer a POST with a 302 to a one-off
   /// script.googleusercontent.com "echo" URL that holds the actual result -
   /// and that echo URL only accepts GET (POSTing to it answers 405 Method Not
-  /// Allowed). Some HTTP stacks auto-downgrade a redirected POST to GET on
-  /// their own per the 301/302/303 spec, but that apparently isn't reliably
-  /// happening here - the symptom was an empty response body instead of the
-  /// real `{"success":true}`. So the redirect is followed explicitly instead
-  /// of trusting the client's default redirect handling.
-  static Future<http.Response> _postThenFollowRedirectAsGet(Uri uri, String body) async {
+  /// Allowed). IO clients (desktop/mobile) apparently aren't reliably
+  /// downgrading the redirected POST to GET on their own, so it's done here
+  /// explicitly. Web has its own path in [save] - see the comment there.
+  static Future<http.Response> _postThenFollowRedirectAsGetIO(Uri uri, String body) async {
     final client = http.Client();
     try {
       final request = http.Request('POST', uri)
